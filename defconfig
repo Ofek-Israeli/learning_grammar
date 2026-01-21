@@ -1,0 +1,40 @@
+#
+# Bloat Axis GEPA Default Configuration
+#
+# Copy to .config and customize, or use kmenuconfig.py
+#
+
+# Data Paths
+CONFIG_GEPA_DATASET_PATH="../minions/evaluate/data/financebench_open_source.jsonl"
+CONFIG_GEPA_PDF_DIR="../minions/evaluate/data/financebench_pdfs"
+CONFIG_GEPA_OUTPUT_DIR="output"
+# CONFIG_GEPA_USE_INITIAL_LOGS is not set
+
+# Budget and Sampling
+CONFIG_GEPA_BUDGET=100
+CONFIG_GEPA_BUDGET_DISCOVER=5
+CONFIG_GEPA_MINIBATCH_SIZE=3
+CONFIG_GEPA_N_PARETO=20
+CONFIG_GEPA_K_DIAGNOSE=3
+
+# Optimization Weights (x100)
+CONFIG_GEPA_LAMBDA=60
+CONFIG_GEPA_TAU=70
+CONFIG_GEPA_CORRECTNESS_TOLERANCE=10
+
+# Logit Processor Defaults
+CONFIG_GEPA_DEFAULT_PENALTY=200
+CONFIG_GEPA_MIN_NEW_TOKENS=48
+
+# Model Configuration
+CONFIG_GEPA_REFLECTION_MODEL="gpt-4o"
+CONFIG_GEPA_LOCAL_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+CONFIG_GEPA_SGLANG_BASE_URL="http://localhost:8000"
+
+# Protocol Settings
+CONFIG_GEPA_MAX_ROUNDS=5
+CONFIG_GEPA_CHUNK_SIZE=3000
+
+# Advanced Settings
+# CONFIG_GEPA_VERBOSE is not set
+CONFIG_GEPA_SEED=0

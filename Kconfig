@@ -1,0 +1,240 @@
+#
+# Bloat Axis GEPA Configuration
+#
+# This Kconfig file defines all configuration options for the GEPA optimizer.
+# Use 'python kmenuconfig.py' for interactive configuration.
+#
+
+mainmenu "Bloat Axis GEPA Configuration"
+
+#
+# Data Paths
+#
+menu "Data Paths"
+
+config GEPA_DATASET_PATH
+	string "FinanceBench dataset path"
+	default "../minions/evaluate/data/financebench_open_source.jsonl"
+	help
+	  Path to the FinanceBench dataset JSONL file.
+	  This file contains the questions and ground truth answers.
+
+config GEPA_PDF_DIR
+	string "PDF documents directory"
+	default "../minions/evaluate/data/financebench_pdfs"
+	help
+	  Path to directory containing FinanceBench PDF documents.
+	  Each sample's doc_name field maps to a PDF file in this directory.
+
+config GEPA_OUTPUT_DIR
+	string "Output directory"
+	default "output"
+	help
+	  Directory for saving evolution results.
+	  Includes learned logit processor, axes config, and statistics.
+
+config GEPA_USE_INITIAL_LOGS
+	bool "Use initial logs for bootstrap"
+	default n
+	help
+	  Enable to load existing minions logs for Phase 0 bootstrap.
+	  This allows starting evolution from pre-computed rollouts
+	  instead of running new protocols.
+
+config GEPA_INITIAL_LOGS_DIR
+	string "Initial logs directory"
+	default "../minions/evaluate/results/run_latest/minions_logs"
+	depends on GEPA_USE_INITIAL_LOGS
+	help
+	  Path to existing minions_logs directory for bootstrap.
+	  Should contain JSON files from previous protocol runs.
+
+endmenu
+
+#
+# Budget and Sampling
+#
+menu "Budget and Sampling"
+
+config GEPA_BUDGET
+	int "Total rollout budget"
+	default 100
+	range 10 10000
+	help
+	  Total number of protocol rollouts to execute.
+	  Higher budget allows more exploration but costs more.
+	  Recommended: 100-500 for initial experiments.
+
+config GEPA_BUDGET_DISCOVER
+	int "Phase 0 discovery budget"
+	default 5
+	range 1 50
+	help
+	  Number of rollouts for Phase 0 axis discovery.
+	  These rollouts run without penalties to discover
+	  initial bloat axes from verbose transcripts.
+
+config GEPA_MINIBATCH_SIZE
+	int "Minibatch size per iteration"
+	default 3
+	range 1 20
+	help
+	  Number of samples to run per evolution iteration.
+	  Larger batches provide more signal but cost more.
+	  Recommended: 3-5 for balance of signal and cost.
+
+config GEPA_N_PARETO
+	int "D_pareto set size"
+	default 20
+	range 5 100
+	help
+	  Size of the Pareto evaluation set (D_pareto).
+	  Used for Pareto-based candidate selection.
+	  Should be large enough for diversity but not too costly.
+
+config GEPA_K_DIAGNOSE
+	int "Diagnosis sample count (K)"
+	default 3
+	range 1 10
+	help
+	  Number of samples for each diagnosis query:
+	  - Query 1: Top-K longest correct (under-compression)
+	  - Query 2: Top-K shortest incorrect (over-compression)
+
+endmenu
+
+#
+# Optimization Weights
+#
+menu "Optimization Weights"
+
+comment "Values are stored as integers x100 (e.g., 60 = 0.6)"
+
+config GEPA_LAMBDA
+	int "Correctness weight lambda (x100)"
+	default 60
+	range 0 100
+	help
+	  Weight for correctness vs compression in utility function.
+	  Utility = lambda * correctness + (1-lambda) * compression
+	  Higher values prioritize correctness over compression.
+	  60 = 0.6 (default), 80 = 0.8 (more correctness-focused)
+
+config GEPA_TAU
+	int "Correctness threshold tau (x100)"
+	default 70
+	range 0 100
+	help
+	  Minimum correctness score for a candidate to be acceptable.
+	  Candidates below this threshold have utility = -inf.
+	  70 = 0.7 (default), meaning 70% correctness required.
+
+config GEPA_CORRECTNESS_TOLERANCE
+	int "Numerical tolerance (x100)"
+	default 10
+	range 0 50
+	help
+	  Tolerance for numerical answer comparison.
+	  10 = 10% tolerance (e.g., 100 matches 90-110).
+	  Used by GPT-4o correctness evaluator.
+
+endmenu
+
+#
+# Logit Processor Defaults
+#
+menu "Logit Processor Defaults"
+
+config GEPA_DEFAULT_PENALTY
+	int "Default penalty strength (x100)"
+	default 200
+	range 10 1000
+	help
+	  Initial penalty magnitude for discovered axes.
+	  200 = 2.0 (default). Higher values = stronger suppression.
+	  Will be tuned by evolution.
+
+config GEPA_MIN_NEW_TOKENS
+	int "Minimum new tokens (anti-truncation)"
+	default 48
+	range 10 200
+	help
+	  Minimum tokens before EOS is allowed.
+	  Prevents degenerate short outputs.
+	  48 is typically safe for financial QA.
+
+endmenu
+
+#
+# Model Configuration
+#
+menu "Model Configuration"
+
+config GEPA_REFLECTION_MODEL
+	string "Reflection LM (remote)"
+	default "gpt-4o"
+	help
+	  Model for reflection (axis discovery, mutation proposals).
+	  Should be a capable model like GPT-4o or Claude.
+	  Also used for correctness evaluation.
+
+config GEPA_LOCAL_MODEL
+	string "Local worker model"
+	default "meta-llama/Llama-3.1-8B-Instruct"
+	help
+	  Model name for local worker in minions protocol.
+	  Must match the model running on SGLang server.
+
+config GEPA_SGLANG_BASE_URL
+	string "SGLang server URL"
+	default "http://localhost:8000"
+	help
+	  URL of the SGLang server for local inference.
+	  Should not include /v1 suffix.
+
+endmenu
+
+#
+# Protocol Settings
+#
+menu "Protocol Settings"
+
+config GEPA_MAX_ROUNDS
+	int "Maximum communication rounds"
+	default 5
+	range 1 10
+	help
+	  Maximum rounds between local and remote in minions protocol.
+	  More rounds can improve accuracy but increase cost.
+
+config GEPA_CHUNK_SIZE
+	int "Document chunk size (characters)"
+	default 3000
+	range 500 10000
+	help
+	  Maximum size of document chunks in characters.
+	  Larger chunks provide more context but use more tokens.
+
+endmenu
+
+#
+# Advanced Settings
+#
+menu "Advanced Settings"
+
+config GEPA_VERBOSE
+	bool "Enable verbose logging"
+	default n
+	help
+	  Enable detailed debug logging during evolution.
+	  Useful for debugging but produces large logs.
+
+config GEPA_SEED
+	int "Random seed (0 = random)"
+	default 0
+	range 0 999999
+	help
+	  Random seed for reproducibility.
+	  Set to 0 for non-deterministic execution.
+
+endmenu

@@ -1,0 +1,27 @@
+# Bloat Axis GEPA Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+openai>=1.0.0          # For GPT-4o reflection LM
+torch>=2.0.0           # For SGLang logit processor
+transformers>=4.30.0   # For tokenizer
+tiktoken>=0.5.0        # For tokenizing bloat phrases (no auth required)
+
+# PDF processing
+PyMuPDF>=1.23.0        # For loading FinanceBench PDFs
+
+# Kconfig support (for menuconfig)
+kconfiglib>=14.1.0     # For Kconfig parsing and menuconfig TUI
+
+# SGLang (optional - for running with custom logit processor)
+# Install from: https://github.com/sgl-project/sglang
+# sglang>=0.2.0
+
+# Minions framework (parent repo)
+# Should already be installed if running from minions repo
+# Otherwise: pip install -e ../minions
+
+# Optional: for development
+# pytest>=7.0.0
+# black>=23.0.0
+# mypy>=1.0.0
