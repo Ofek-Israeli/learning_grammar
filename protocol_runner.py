@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,10 +18,27 @@ import fitz  # PyMuPDF
 MINIONS_REPO = Path(__file__).parent.parent / "minions"
 sys.path.insert(0, str(MINIONS_REPO))
 
-from minions.clients.openai import OpenAIClient
-from minions.clients.sglang import SGLangClient
-from minions.minions import Minions
 from minions.usage import Usage
+
+# Import minions evaluator modules directly (avoid name collision with learning_grammar's kconfig_loader)
+import importlib.util
+
+_minions_kconfig_spec = importlib.util.spec_from_file_location(
+    "minions_kconfig_loader", 
+    MINIONS_REPO / "evaluate" / "kconfig_loader.py"
+)
+_minions_kconfig_module = importlib.util.module_from_spec(_minions_kconfig_spec)
+_minions_kconfig_spec.loader.exec_module(_minions_kconfig_module)
+MinionsKconfigLoader = _minions_kconfig_module.KconfigLoader
+MinionsEvaluatorConfig = _minions_kconfig_module.EvaluatorConfig
+
+_fb_evaluator_spec = importlib.util.spec_from_file_location(
+    "financebench_evaluator",
+    MINIONS_REPO / "evaluate" / "financebench_evaluator.py"
+)
+_fb_evaluator_module = importlib.util.module_from_spec(_fb_evaluator_spec)
+_fb_evaluator_spec.loader.exec_module(_fb_evaluator_module)
+FinanceBenchProtocolRunner = _fb_evaluator_module.ProtocolRunner
 
 try:
     from .gepa_types import (
@@ -120,6 +136,46 @@ class ProtocolRunner:
                 logger.warning(f"Could not load tokenizer: {e}")
         
         self.total_usage = Usage()
+        
+        # Load minions protocol config
+        minions_config_path = MINIONS_REPO / ".config"
+        if minions_config_path.exists():
+            self.minions_eval_config = MinionsKconfigLoader.load_config(str(minions_config_path))
+            logger.info(f"Loaded minions config from {minions_config_path}")
+        else:
+            self.minions_eval_config = None
+            logger.warning("minions/.config not found, using defaults")
+        
+        # Create the financebench protocol runner for running minions
+        mc = self.minions_eval_config
+        if mc:
+            self.fb_protocol_runner = FinanceBenchProtocolRunner(
+                local_model=mc.models.local.name,
+                remote_model=mc.models.remote.name,
+                local_temp=mc.models.local.temperature,
+                remote_temp=mc.models.remote.temperature,
+                num_ctx=mc.models.local.num_ctx,
+                local_backend=mc.models.local.backend,
+                sglang_base_url=mc.models.local.sglang_base_url,
+                generation_strategy=mc.models.local.generation_strategy,
+                beta_explanation=mc.models.local.beta_explanation,
+                beta_citation=mc.models.local.beta_citation,
+                beta_answer=mc.models.local.beta_answer,
+                min_tokens_explanation=mc.models.local.min_tokens_explanation,
+                min_tokens_citation=mc.models.local.min_tokens_citation,
+                min_tokens_answer=mc.models.local.min_tokens_answer,
+                max_tokens_explanation=mc.models.local.max_tokens_explanation,
+                max_tokens_citation=mc.models.local.max_tokens_citation,
+                max_tokens_answer=mc.models.local.max_tokens_answer,
+            )
+        else:
+            # Fallback to defaults
+            self.fb_protocol_runner = FinanceBenchProtocolRunner(
+                local_model=config.local_model,
+                remote_model=config.reflection_model,
+                local_backend="sglang",
+                sglang_base_url=config.sglang_base_url,
+            )
     
     def load_samples(
         self,
@@ -200,7 +256,7 @@ class ProtocolRunner:
         candidate: Optional[Candidate] = None,
     ) -> Rollout:
         """
-        Run the minions protocol on a single sample.
+        Run the minions protocol on a single sample using financebench_evaluator.
         
         Args:
             sample: FinanceBench sample to run
@@ -209,50 +265,66 @@ class ProtocolRunner:
         Returns:
             Rollout with results and traces
         """
-        # Create remote client (GPT-4o)
-        remote_client = OpenAIClient(
-            model_name=self.config.reflection_model,
-            temperature=0.0,
-            max_tokens=4096,
-        )
+        # Build kwargs from minions config
+        minions_proto = self.minions_eval_config.protocols.minions if self.minions_eval_config else None
+        common_proto = self.minions_eval_config.protocols.common if self.minions_eval_config else None
         
-        # Create local client with custom logit processor
-        local_client = self._create_local_client(candidate)
+        kwargs = {
+            'max_chunk_size': minions_proto.max_chunk_size if minions_proto else 3000,
+            'pages_per_chunk': minions_proto.pages_per_chunk if minions_proto else 5,
+            'num_tasks_per_round': minions_proto.num_tasks_per_round if minions_proto else 12,
+            'num_samples_per_task': common_proto.num_samples_per_task if common_proto else 1,
+            'chunk_fn': minions_proto.chunk_fn if minions_proto else "chunk_on_multiple_pages",
+            'max_jobs_per_round': minions_proto.max_jobs_per_round if minions_proto else None,
+        }
         
-        # Create minions instance
-        minions = Minions(
-            remote_client=remote_client,
-            local_client=local_client,
-            max_rounds=self.config.max_rounds,
-        )
+        # Extract custom token IDs from candidate if provided
+        if candidate and candidate.axes:
+            self._ensure_token_ids(candidate)
+            
+            intro_token_ids = set()
+            always_token_ids = set()
+            list_token_ids = set()
+            
+            for axis in candidate.axes:
+                if axis.condition_type.value == "early_phase":
+                    intro_token_ids |= axis.token_ids
+                elif axis.condition_type.value == "always":
+                    always_token_ids |= axis.token_ids
+                elif axis.condition_type.value == "after_newline":
+                    list_token_ids |= axis.token_ids
+            
+            if intro_token_ids:
+                kwargs['intro_token_ids'] = list(intro_token_ids)
+            if always_token_ids:
+                kwargs['always_token_ids'] = list(always_token_ids)
+            if list_token_ids:
+                kwargs['list_token_ids'] = list(list_token_ids)
         
-        # Run protocol
-        start_time = datetime.now()
+        # Run protocol using financebench_evaluator's ProtocolRunner
+        max_rounds = common_proto.max_rounds if common_proto else self.config.max_rounds
         
         try:
-            result = minions(
-                context=[sample.document_text],
-                task=sample.question,
+            result = self.fb_protocol_runner.run_minions(
+                question=sample.question,
+                context=sample.document_text,
+                max_rounds=max_rounds,
+                **kwargs
             )
             
             # Parse result
-            predicted_answer = self._extract_answer(result)
-            conversation = self._extract_conversation(result)
-            worker_outputs = self._extract_worker_outputs(conversation)
-            transcript = self._compute_transcript(worker_outputs)
+            predicted_answer = result.get('final_answer', '')
             
             # Update usage
-            self.total_usage += result.get('usage', Usage())
+            self.total_usage += result.get('local_usage', Usage())
+            self.total_usage += result.get('remote_usage', Usage())
             
             rollout = Rollout(
                 sample_id=sample.sample_id,
                 question=sample.question,
                 ground_truth=sample.ground_truth,
                 predicted_answer=predicted_answer,
-                conversation=conversation,
-                worker_outputs=worker_outputs,
-                transcript_length=len(transcript),
-                token_count=self._count_tokens(transcript),
+                is_correct=None,  # Will be evaluated later
             )
             
             return rollout
@@ -266,81 +338,6 @@ class ProtocolRunner:
                 predicted_answer="",
                 is_correct=False,
             )
-    
-    def _create_local_client(
-        self,
-        candidate: Optional[Candidate],
-    ) -> SGLangClient:
-        """
-        Create SGLang client with custom logit processor config.
-        
-        Args:
-            candidate: Candidate with bloat axis configuration
-            
-        Returns:
-            Configured SGLangClient
-        """
-        # Build custom_params from candidate
-        custom_params = {}
-        
-        if candidate and candidate.axes:
-            # Ensure token IDs are computed
-            self._ensure_token_ids(candidate)
-            
-            # Collect all penalty token IDs by condition type
-            intro_token_ids = set()
-            always_token_ids = set()
-            list_token_ids = set()
-            
-            for axis in candidate.axes:
-                if axis.condition_type.value == "early_phase":
-                    intro_token_ids |= axis.token_ids
-                elif axis.condition_type.value == "always":
-                    always_token_ids |= axis.token_ids
-                elif axis.condition_type.value == "after_newline":
-                    list_token_ids |= axis.token_ids
-            
-            custom_params = {
-                "intro_token_ids": list(intro_token_ids),
-                "always_token_ids": list(always_token_ids),
-                "list_token_ids": list(list_token_ids),
-                "min_new_tokens": candidate.min_new_tokens,
-                # Extract penalties (use max for each category)
-                "intro_penalty": max(
-                    (a.penalty for a in candidate.axes 
-                     if a.condition_type.value == "early_phase"),
-                    default=5.0
-                ),
-                "always_penalty": max(
-                    (a.penalty for a in candidate.axes 
-                     if a.condition_type.value == "always"),
-                    default=0.5
-                ),
-                "list_penalty": max(
-                    (a.penalty for a in candidate.axes 
-                     if a.condition_type.value == "after_newline"),
-                    default=4.0
-                ),
-            }
-        
-        client = SGLangClient(
-            model_name=self.config.local_model,
-            base_url=self.config.sglang_base_url,
-            temperature=0.2,
-            max_tokens=2048,
-            min_tokens_explanation=candidate.min_new_tokens if candidate else 48,
-        )
-        
-        # Override precomputed token IDs if we have custom ones
-        if custom_params:
-            if custom_params.get("intro_token_ids"):
-                client.intro_token_ids = set(custom_params["intro_token_ids"])
-            if custom_params.get("always_token_ids"):
-                client.always_token_ids = set(custom_params["always_token_ids"])
-            if custom_params.get("list_token_ids"):
-                client.list_token_ids = set(custom_params["list_token_ids"])
-        
-        return client
     
     def _ensure_token_ids(self, candidate: Candidate):
         """Ensure all axes have token IDs computed."""

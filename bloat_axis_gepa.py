@@ -167,7 +167,7 @@ class BloatAxisGEPA:
         # Main evolution loop
         while self.rollout_count < self.config.budget:
             self.iteration += 1
-            logger.info(f"\n--- Iteration {self.iteration} (rollouts: {self.rollout_count}/{self.config.budget}) ---")
+            print(f"\n--- Iteration {self.iteration} (rollouts: {self.rollout_count}/{self.config.budget}) ---", flush=True)
             
             # Select candidate via Pareto sampling
             k = select_candidate(self.pool, self.pareto_indices)
@@ -214,12 +214,12 @@ class BloatAxisGEPA:
             sigma = self._compute_avg_utility(candidate, rollouts)
             sigma_new = self._compute_avg_utility_new(new_candidate, minibatch)
             
-            logger.info(f"Utility: {sigma:.4f} -> {sigma_new:.4f}")
+            print(f"Utility: {sigma:.4f} -> {sigma_new:.4f}", flush=True)
             
             # Accept if improved
             if sigma_new > sigma:
                 new_idx = self.pool.add_candidate(new_candidate, parent_idx=k)
-                logger.info(f"Added improved candidate {new_idx} (parent={k})")
+                print(f"Added improved candidate {new_idx} (parent={k})", flush=True)
                 
                 # Score on D_pareto
                 self._score_candidate_on_pareto(new_idx)
@@ -231,6 +231,12 @@ class BloatAxisGEPA:
                     f"{stats['num_pareto']} on Pareto frontier, "
                     f"best avg: {stats['best_avg_score']:.4f}"
                 )
+                
+                # Export current best as checkpoint
+                current_best_idx = self.pool.get_best_candidate(self.pareto_indices)
+                current_best = self.pool.candidates[current_best_idx]
+                self._export_results(current_best)
+                print(f"Checkpoint saved to {self.config.output_dir}/learned_logit_processor.py", flush=True)
             else:
                 logger.info("Mutation did not improve, discarding")
         
