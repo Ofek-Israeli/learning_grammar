@@ -573,6 +573,18 @@ class BloatAxisGEPA:
             }, f, indent=2)
         
         logger.info(f"Results exported to {output_dir}")
+        
+        # Print usage instructions for the evaluator
+        print("\n" + "=" * 70)
+        print("LEARNED LOGIT PROCESSOR EXPORTED")
+        print("=" * 70)
+        print(f"\nLogit processor saved to: {default_path}")
+        print(f"\nTo use with the FinanceBench evaluator, run:")
+        print(f"\n  python evaluate/financebench_evaluator.py .config \\")
+        print(f"      --logit-processor-path {default_path}")
+        print(f"\nOr set in your .config file:")
+        print(f"  CONFIG_LOGIT_PROCESSOR_PATH=\"{default_path}\"")
+        print("=" * 70 + "\n")
 
 
 def main():
